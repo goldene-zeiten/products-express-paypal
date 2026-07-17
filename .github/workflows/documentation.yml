@@ -1,0 +1,27 @@
+name: test documentation
+
+# Renders this extension's documentation in its own split repository, standalone. The monorepo already
+# renders every package on a pull request, but a document can resolve there yet break once the package
+# stands on its own (a reference or include that only existed in the monorepo). This runs in the split
+# repository on every push to main, so such a break is caught and reported where it happens. --fail-on-log
+# turns render warnings (unresolved references and the like) into a failure.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  documentation:
+    name: "render documentation"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Render documentation"
+        run: |
+          docker run --rm --pull always -v "$(pwd)":/project \
+            ghcr.io/typo3-documentation/render-guides:latest \
+            --config=Documentation --no-progress --fail-on-log

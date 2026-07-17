@@ -1,0 +1,6 @@
+# Keep development-only files out of the dist/TER archives built from the split
+# repository - they are only relevant inside the monorepo.
+/Build/          export-ignore
+/Tests/          export-ignore
+/.gitattributes  export-ignore
+/.github/        export-ignore

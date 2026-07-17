@@ -1,0 +1,2 @@
+# Third-party libraries bundled into the TER artifact at build time (never committed).
+/Resources/Private/Php/ComposerVendor/
