@@ -1,0 +1,22 @@
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+    public: false
+
+  GoldeneZeiten\Products\Express\Paypal\:
+    resource: '../Classes/*'
+
+  cache.products_express_paypal_token:
+    class: TYPO3\CMS\Core\Cache\Frontend\FrontendInterface
+    factory: ['@TYPO3\CMS\Core\Cache\CacheManager', 'getCache']
+    arguments: ['products_express_paypal_token']
+
+  products_express_paypal.oauth_token_provider:
+    class: GoldeneZeiten\Products\ApiClient\Authentication\OAuth2ClientCredentialsProvider
+    arguments:
+      $tokenCache: '@cache.products_express_paypal_token'
+
+  GoldeneZeiten\Products\Express\Paypal\Order\ExpressPaypalOrderClient:
+    arguments:
+      $tokenProvider: '@products_express_paypal.oauth_token_provider'

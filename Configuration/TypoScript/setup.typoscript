@@ -1,0 +1,94 @@
+plugin.tx_productsexpresspaypal {
+    settings {
+        create {
+            pageType = {$plugin.tx_productsexpresspaypal.settings.create.pageType}
+        }
+        shipping {
+            pageType = {$plugin.tx_productsexpresspaypal.settings.shipping.pageType}
+        }
+        confirm {
+            pageType = {$plugin.tx_productsexpresspaypal.settings.confirm.pageType}
+        }
+    }
+}
+
+# The PayPal JS SDK posts to these typeNum PAGEs, each running only its one express action and returning the
+# action's JSON verbatim (disableAllHeaderCode). no_cache is mandatory: every one drives a PayPal Orders API
+# call (create / patch / capture) and must not be cached.
+products_express_paypal_create = PAGE
+products_express_paypal_create {
+    typeNum = {$plugin.tx_productsexpresspaypal.settings.create.pageType}
+    config {
+        disableAllHeaderCode = 1
+        xhtml_cleaning = 0
+        admPanel = 0
+        debug = 0
+        no_cache = 1
+    }
+    10 = USER
+    10 {
+        userFunc = TYPO3\CMS\Extbase\Core\Bootstrap->run
+        extensionName = ProductsExpressPaypal
+        pluginName = ExpressCheckout
+        vendorName = GoldeneZeiten
+        controller = ExpressCheckoutController
+        action = create
+        switchableControllerActions {
+            ExpressCheckoutController {
+                1 = create
+            }
+        }
+    }
+}
+
+products_express_paypal_shipping = PAGE
+products_express_paypal_shipping {
+    typeNum = {$plugin.tx_productsexpresspaypal.settings.shipping.pageType}
+    config {
+        disableAllHeaderCode = 1
+        xhtml_cleaning = 0
+        admPanel = 0
+        debug = 0
+        no_cache = 1
+    }
+    10 = USER
+    10 {
+        userFunc = TYPO3\CMS\Extbase\Core\Bootstrap->run
+        extensionName = ProductsExpressPaypal
+        pluginName = ExpressCheckout
+        vendorName = GoldeneZeiten
+        controller = ExpressCheckoutController
+        action = shipping
+        switchableControllerActions {
+            ExpressCheckoutController {
+                1 = shipping
+            }
+        }
+    }
+}
+
+products_express_paypal_confirm = PAGE
+products_express_paypal_confirm {
+    typeNum = {$plugin.tx_productsexpresspaypal.settings.confirm.pageType}
+    config {
+        disableAllHeaderCode = 1
+        xhtml_cleaning = 0
+        admPanel = 0
+        debug = 0
+        no_cache = 1
+    }
+    10 = USER
+    10 {
+        userFunc = TYPO3\CMS\Extbase\Core\Bootstrap->run
+        extensionName = ProductsExpressPaypal
+        pluginName = ExpressCheckout
+        vendorName = GoldeneZeiten
+        controller = ExpressCheckoutController
+        action = confirm
+        switchableControllerActions {
+            ExpressCheckoutController {
+                1 = confirm
+            }
+        }
+    }
+}

@@ -1,0 +1,5 @@
+name: goldene-zeiten/products-express-paypal
+label: Products PayPal Express Checkout
+dependencies:
+  - goldene-zeiten/products-core
+  - goldene-zeiten/products-payment-paypal

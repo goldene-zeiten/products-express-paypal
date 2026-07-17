@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+	<file source-language="en" datatype="plaintext" original="EXT:products_express_paypal/Resources/Private/Language/locallang.xlf" date="2026-07-17T12:00:00Z" product-name="products_express_paypal">
+		<header/>
+		<body>
+			<trans-unit id="express_checkout_paypal" resname="express_checkout_paypal">
+				<source>PayPal Express Checkout</source>
+			</trans-unit>
+		</body>
+	</file>
+</xliff>

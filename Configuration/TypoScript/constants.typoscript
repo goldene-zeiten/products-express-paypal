@@ -1,0 +1,16 @@
+plugin.tx_productsexpresspaypal {
+    settings {
+        create {
+            # cat=plugin.tx_productsexpresspaypal/create; type=int; label=PayPal express create-order page typeNum
+            pageType = 1784220820
+        }
+        shipping {
+            # cat=plugin.tx_productsexpresspaypal/shipping; type=int; label=PayPal express shipping-update page typeNum
+            pageType = 1784220821
+        }
+        confirm {
+            # cat=plugin.tx_productsexpresspaypal/confirm; type=int; label=PayPal express confirm page typeNum
+            pageType = 1784220822
+        }
+    }
+}

@@ -1,0 +1,18 @@
+<html data-namespace-typo3-fluid="true"
+      xmlns:f="http://typo3.org/ns/TYPO3/Fluid/ViewHelpers"
+>
+<f:if condition="{configuration}">
+    <f:asset.script identifier="products-express-paypal"
+                    src="EXT:products_express_paypal/Resources/Public/JavaScript/express-checkout.js" type="module" />
+    <div class="products-express-checkout products-express-checkout--paypal"
+         data-paypal-express-checkout
+         data-client-id="{configuration.clientId}"
+         data-currency="{configuration.currency}"
+         data-basket-token="{basketToken}"
+         data-shipping-quote-url="{configuration.shippingQuoteUrl}"
+         data-create-url="{f:uri.action(action: 'create', pageType: settings.create.pageType)}"
+         data-shipping-url="{f:uri.action(action: 'shipping', pageType: settings.shipping.pageType)}"
+         data-confirm-url="{f:uri.action(action: 'confirm', pageType: settings.confirm.pageType)}"
+    ></div>
+</f:if>
+</html>
