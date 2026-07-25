@@ -48,7 +48,7 @@ abstract class AbstractPaypalExpressMockTestCase extends AbstractApiMockTestCase
 
     protected function orderClient(): ExpressPaypalOrderClient
     {
-        $apiHttpClient = new ApiHttpClient($this->httpClient());
+        $apiHttpClient = new ApiHttpClient($this->requestFactory());
 
         return new ExpressPaypalOrderClient(
             $apiHttpClient,
