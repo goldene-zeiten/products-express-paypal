@@ -9,8 +9,6 @@ jobs:
     name: Ensure GitHub Release with extension TER artifact and publishing to TER
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    env:
-      TYPO3_API_TOKEN: ${{ secrets.TYPO3_API_TOKEN }}
     permissions:
       contents: write
     steps:
@@ -54,8 +52,9 @@ jobs:
 
       # Extensions that require third-party Composer libraries must ship them for TYPO3 Classic mode, where
       # Composer does not resolve dependencies. The libraries are vendored into the path each extension
-      # declares in `extra.typo3/cms.Package.providesPackages` (from where TYPO3 loads their autoload.php) -
-      # built here, into the artifact only, never committed. A no-op for extensions that provide nothing.
+      # declares in `extra.typo3/cms.Package.providesPackages` and autoloaded through the `autoload` section
+      # of its ext_emconf.php. Built here, into the artifact only, never committed. A no-op for extensions
+      # that provide nothing.
       - name: Bundle third-party libraries for TYPO3 Classic mode
         run: |
           jq -r '.extra."typo3/cms".Package.providesPackages // {} | to_entries[] | [.key, .value] | @tsv' composer.json |
@@ -65,7 +64,7 @@ jobs:
             echo "Bundling ${package} (${constraint}) into ${path}"
             workdir="$(mktemp -d)"
             composer --working-dir="$workdir" require "${package}:${constraint}" \
-              --no-interaction --no-progress --optimize-autoloader --no-dev
+              --no-interaction --no-progress --optimize-autoloader --update-no-dev
             mkdir -p "$path"
             cp -a "$workdir/vendor/." "$path/"
           done
@@ -88,7 +87,11 @@ jobs:
             LICENSE
           fail_on_unmatched_files: true
 
+      # The TER token is handed to this one step only, so no other step - in particular no third-party
+      # action - can read it.
       - name: Publish to TER
+        env:
+          TYPO3_API_TOKEN: ${{ secrets.TYPO3_API_TOKEN }}
         run: |
           php ~/.composer/vendor/bin/tailor ter:publish --comment "${{ env.terReleaseNotes }}" ${{ env.version }} \
             --artefact=tailor-version-artefact/${{ env.DETECTED_EXTENSION_KEY }}_${{ env.version }}.zip
