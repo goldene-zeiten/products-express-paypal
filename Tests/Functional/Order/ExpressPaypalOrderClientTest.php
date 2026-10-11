@@ -18,7 +18,7 @@ final class ExpressPaypalOrderClientTest extends AbstractPaypalExpressMockTestCa
     #[Test]
     public function createsAnOrderForTheGoodsTotal(): void
     {
-        $orderId = $this->orderClient()->createOrder(10000, 'EUR', $this->configuration());
+        $orderId = $this->orderClient()->createOrder(10000, 'EUR', 'basket-binding', $this->configuration());
 
         $this->assertSame('PAYPAL-EXPRESS-ORDER-1', $orderId);
     }
@@ -39,7 +39,7 @@ final class ExpressPaypalOrderClientTest extends AbstractPaypalExpressMockTestCa
     #[Test]
     public function createsAYenOrderWithoutDecimals(): void
     {
-        $this->orderClient()->createOrder(100000, 'JPY', $this->configuration());
+        $this->orderClient()->createOrder(100000, 'JPY', 'basket-binding', $this->configuration());
 
         $body = json_decode((string)$this->loggedRequests('/express/paypal/v2/checkout/orders')[0]['body'], true);
         $this->assertSame('1000', $body['purchase_units'][0]['amount']['value']);
@@ -59,6 +59,49 @@ final class ExpressPaypalOrderClientTest extends AbstractPaypalExpressMockTestCa
         $this->assertSame('1234', $amount['breakdown']['item_total']['value']);
         $this->assertSame('500', $amount['breakdown']['shipping']['value']);
         $this->assertSame('1734', $amount['value']);
+    }
+
+    #[Test]
+    public function createsTheOrderWithTheBasketBindingAsCustomId(): void
+    {
+        $this->orderClient()->createOrder(10000, 'EUR', 'basket-binding', $this->configuration());
+
+        $body = json_decode((string)$this->loggedRequests('/express/paypal/v2/checkout/orders')[0]['body'], true);
+        $this->assertSame('basket-binding', $body['purchase_units'][0]['custom_id']);
+    }
+
+    #[Test]
+    public function reportsTheCapturedAmountOfAFreshCapture(): void
+    {
+        $capture = $this->orderClient()->capture('PAYPAL-EXPRESS-ORDER-1', $this->configuration());
+
+        $this->assertSame(10000, $capture->getAmount()?->getCents());
+        $this->assertSame('EUR', $capture->getCurrency());
+        $this->assertFalse($capture->isReplayed());
+    }
+
+    /**
+     * A replayed confirm must not be taken at its word: the order is read back, and the caller gets the
+     * binding it was created with to compare.
+     */
+    #[Test]
+    public function anAlreadyCapturedOrderIsReadBackWithItsBinding(): void
+    {
+        $capture = $this->orderClient()->capture('PAYPAL-EXPRESS-ORDER-CAPTURED', $this->configuration());
+
+        $this->assertTrue($capture->isReplayed());
+        $this->assertTrue($capture->isCompleted());
+        $this->assertSame('a-different-basket', $capture->getCustomId());
+        $this->assertSame('EXPRESS-CAPTURE-OTHER', $capture->getCaptureId());
+        $this->assertSame(10000, $capture->getAmount()?->getCents());
+    }
+
+    #[Test]
+    public function aCaptureCanBeRefunded(): void
+    {
+        $this->orderClient()->refundCapture('EXPRESS-CAPTURE-1', $this->configuration());
+
+        $this->assertCount(1, $this->loggedRequests('/express/paypal/v2/payments/captures/EXPRESS-CAPTURE-1/refund'));
     }
 
     #[Test]

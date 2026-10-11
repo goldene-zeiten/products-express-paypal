@@ -7,11 +7,13 @@ namespace GoldeneZeiten\Products\Express\Paypal\Controller;
 use GoldeneZeiten\Products\Core\Domain\Dto\Address;
 use GoldeneZeiten\Products\Core\Domain\Dto\Express\ExpressCheckoutContext;
 use GoldeneZeiten\Products\Core\Domain\Model\Order;
+use GoldeneZeiten\Products\Core\Express\Exception\ExpressOrderExceptionInterface;
 use GoldeneZeiten\Products\Core\Express\ExpressBasketFactory;
 use GoldeneZeiten\Products\Core\Express\ExpressBasketTokenService;
 use GoldeneZeiten\Products\Core\Express\ExpressCheckoutProviderRegistry;
 use GoldeneZeiten\Products\Core\Service\Basket\BasketService;
 use GoldeneZeiten\Products\Core\Service\FrontendUserResolver;
+use GoldeneZeiten\Products\Core\Service\Order\OrderTokenService;
 use GoldeneZeiten\Products\Express\Paypal\Express\Exception\ExpressPaymentDeclinedException;
 use GoldeneZeiten\Products\Express\Paypal\Express\PaypalExpressCheckoutProvider;
 use GoldeneZeiten\Products\Express\Paypal\Express\PaypalExpressCheckoutService;
@@ -39,6 +41,7 @@ final class ExpressCheckoutController extends ActionController
         private readonly ExpressCheckoutProviderRegistry $providerRegistry,
         private readonly ExpressBasketFactory $expressBasketFactory,
         private readonly ExpressBasketTokenService $basketTokenService,
+        private readonly OrderTokenService $orderTokenService,
         private readonly PaypalExpressCheckoutService $checkoutService
     ) {}
 
@@ -84,7 +87,7 @@ final class ExpressCheckoutController extends ActionController
             state: (string)($body['state'] ?? '')
         );
         try {
-            $quote = $this->checkoutService->quoteShipping($this->request, $this->basketService->getBasketViewModel($this->request), $address, (string)($body['orderId'] ?? ''));
+            $quote = $this->checkoutService->quoteShipping($this->request, $this->basketService->getBasketViewModel($this->request, $address->getCountry()), $address, (string)($body['orderId'] ?? ''));
         } catch (PaypalApiException) {
             return new JsonResponse(['error' => 'shipping_failed'], 502);
         }
@@ -95,16 +98,19 @@ final class ExpressCheckoutController extends ActionController
     public function confirmAction(): ResponseInterface
     {
         $body = $this->parsedBody();
+        $address = $this->buildAddress($body);
         try {
             $order = $this->checkoutService->confirm(
                 $this->request,
-                $this->basketService->getBasketViewModel($this->request),
-                $this->buildAddress($body),
+                $this->basketService->getBasketViewModel($this->request, $address->getCountry()),
+                $address,
                 (string)($body['shippingOption'] ?? ''),
                 (string)($body['orderId'] ?? '')
             );
         } catch (ExpressPaymentDeclinedException) {
             return new JsonResponse(['error' => 'payment_declined'], 402);
+        } catch (ExpressOrderExceptionInterface) {
+            return new JsonResponse(['error' => 'order_failed'], 409);
         }
 
         return new JsonResponse(['redirectUrl' => $this->thankYouUrl($order)]);
@@ -146,6 +152,12 @@ final class ExpressCheckoutController extends ActionController
         return $this->uriBuilder->reset()
             ->setCreateAbsoluteUri(true)
             ->setTargetPageUid($checkoutPageUid)
-            ->uriFor('thankYou', ['order' => $order->getUid()], 'Checkout', 'ProductsCore', 'Checkout');
+            ->uriFor(
+                'thankYou',
+                ['order' => $order->getUid(), 'hash' => $this->orderTokenService->generateToken($order)],
+                'Checkout',
+                'ProductsCore',
+                'Checkout'
+            );
     }
 }

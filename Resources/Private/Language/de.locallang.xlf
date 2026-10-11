@@ -7,6 +7,10 @@
 				<source>PayPal Express Checkout</source>
 				<target>PayPal Express-Checkout</target>
 			</trans-unit>
+			<trans-unit id="express_checkout_failed" resname="express_checkout_failed">
+				<source>Your payment could not be completed. Nothing has been charged - please try again or use the regular checkout.</source>
+				<target>Ihre Zahlung konnte nicht abgeschlossen werden. Es wurde nichts abgebucht - bitte versuchen Sie es erneut oder nutzen Sie den regulären Checkout.</target>
+			</trans-unit>
 		</body>
 	</file>
 </xliff>

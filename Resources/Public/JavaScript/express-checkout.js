@@ -23,6 +23,7 @@ export default class PaypalExpressCheckout {
     this.confirmUrl = container.getAttribute('data-confirm-url');
     this.orderId = '';
     this.selectedShippingOption = '';
+    this.errorMessage = container.getAttribute('data-error-message') || '';
     if (this.clientId) {
       this.loadSdk()
         .then(() => this.render())
@@ -84,7 +85,17 @@ export default class PaypalExpressCheckout {
     const payload = await this.postForm(this.confirmUrl, this.confirmFields(data.orderID || this.orderId, details));
     if (payload && payload.redirectUrl) {
       window.location.assign(payload.redirectUrl);
+      return;
     }
+    this.showError();
+  }
+
+  showError() {
+    const message = document.createElement('p');
+    message.setAttribute('role', 'alert');
+    message.className = 'products-express-checkout__error';
+    message.textContent = this.errorMessage;
+    this.container.appendChild(message);
   }
 
   confirmFields(orderId, details) {

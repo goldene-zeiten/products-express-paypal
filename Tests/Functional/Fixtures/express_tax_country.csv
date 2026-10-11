@@ -1,0 +1,14 @@
+"tx_products_domain_model_taxclass",,,
+,"uid","title","code"
+,1,"Standard Tax","standard"
+,2,"Reduced Tax","reduced"
+
+"tx_products_domain_model_taxrate",,,,
+,"uid","tax_class","country","rate"
+,1,1,"DE","19.00"
+,2,2,"DE","7.00"
+,3,2,"FR","5.50"
+
+"tx_products_domain_model_product",,,,,,
+,"uid","pid","title","slug","price","tax_class","in_stock"
+,1,2,"Book","book","10.00",2,100

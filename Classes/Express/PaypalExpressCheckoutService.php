@@ -4,24 +4,19 @@ declare(strict_types=1);
 
 namespace GoldeneZeiten\Products\Express\Paypal\Express;
 
-use GoldeneZeiten\Products\Core\Configuration\ProductsConfiguration;
 use GoldeneZeiten\Products\Core\Configuration\ProductsConfigurationFactory;
 use GoldeneZeiten\Products\Core\Domain\Dto\Address;
 use GoldeneZeiten\Products\Core\Domain\Dto\BasketViewModel;
-use GoldeneZeiten\Products\Core\Domain\Dto\Payment\PaymentResult;
-use GoldeneZeiten\Products\Core\Domain\Enum\PaymentStatus;
 use GoldeneZeiten\Products\Core\Domain\Model\Order;
+use GoldeneZeiten\Products\Core\Express\ExpressCheckoutProviderInterface;
 use GoldeneZeiten\Products\Core\Express\ExpressCheckoutProviderRegistry;
 use GoldeneZeiten\Products\Core\Express\ExpressOrderService;
 use GoldeneZeiten\Products\Core\Service\Checkout\PriceQuoteService;
 use GoldeneZeiten\Products\Core\Shipping\ShippingContextFactory;
 use GoldeneZeiten\Products\Core\Shipping\ShippingQuoteService;
-use GoldeneZeiten\Products\Express\Paypal\Express\Exception\ExpressPaymentDeclinedException;
 use GoldeneZeiten\Products\Express\Paypal\Order\ExpressPaypalOrderClient;
-use GoldeneZeiten\Products\Express\Paypal\Order\PaypalExpressCapture;
-use GoldeneZeiten\Products\Payment\Paypal\Configuration\PaypalConfiguration;
+use GoldeneZeiten\Products\Payment\Paypal\Amount\PaypalAmountFormatter;
 use GoldeneZeiten\Products\Payment\Paypal\Configuration\PaypalConfigurationFactory;
-use GoldeneZeiten\Products\Payment\Paypal\Exception\PaypalApiException;
 use Psr\Http\Message\ServerRequestInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Core\Site\Entity\Site;
@@ -29,13 +24,12 @@ use TYPO3\CMS\Core\Site\Entity\Site;
 /**
  * Orchestrates the three server steps of a PayPal express checkout, all against the shop's own basket and
  * shipping rather than the client's: create the order the buyer approves (for the goods total), keep its
- * amount in step with the live shipping the shop quotes for the address the buyer picks, and - only once
- * PayPal has captured the money - create the paid order through the same {@see ExpressOrderService} normal
- * checkout uses.
+ * amount in step with the order total the core express order service quotes for the address and shipping
+ * option the buyer picks, and - at confirm - hand that service the approved PayPal order as a settlement.
  *
- * The amount is patched onto the PayPal order once more at confirm, immediately before capture, so what is
- * captured is exactly the server-computed total (goods plus the chosen carrier cost) and never a figure the
- * client could have influenced.
+ * The core service creates the order first and asks the settlement to set the PayPal order to exactly the
+ * order total before capturing it, so what is captured is the total of the order and never a figure the
+ * client could have influenced; a capture whose order cannot be placed is refunded.
  */
 #[Autoconfigure(public: true)]
 final readonly class PaypalExpressCheckoutService
@@ -48,23 +42,27 @@ final readonly class PaypalExpressCheckoutService
         private ShippingQuoteService $shippingQuoteService,
         private ShippingContextFactory $shippingContextFactory,
         private PriceQuoteService $priceQuoteService,
-        private ProductsConfigurationFactory $productsConfigurationFactory
+        private ProductsConfigurationFactory $productsConfigurationFactory,
+        private PaypalExpressBinding $binding,
+        private PaypalAmountFormatter $amountFormatter
     ) {}
 
     public function createOrder(ServerRequestInterface $request, BasketViewModel $liveBasketViewModel): string
     {
-        $quotedBasket = $this->quote($request, $liveBasketViewModel);
+        $quotedBasket = $this->priceQuoteService->resolve($request, $liveBasketViewModel, $this->productsConfigurationFactory->create($request));
 
         return $this->orderClient->createOrder(
             $quotedBasket->getTotalGross()->getCents(),
             $quotedBasket->getCurrency(),
+            $this->binding->customIdFor($liveBasketViewModel),
             $this->configurationFactory->forRequest($request)
         );
     }
 
     /**
-     * Recomputes shipping for the address the buyer picked, patches the PayPal order so its total (and the
-     * PayPal sheet) reflect it, and reports the chosen option back so confirm can charge that exact one.
+     * Recomputes shipping for the address the buyer picked, sets the PayPal order to the total the core
+     * order service quotes for it so the PayPal sheet shows what will be charged, and reports the chosen
+     * option back so confirm can place the order with that exact one.
      *
      * @return array{serviceable: bool, shippingOption: string, shippingAmount: int}
      */
@@ -79,61 +77,40 @@ final readonly class PaypalExpressCheckoutService
         }
 
         $chosen = $options[0];
-        $this->orderClient->updateAmount($paypalOrderId, $quotedBasket->getTotalGross()->getCents(), $chosen->getCost()->getCents(), $quotedBasket->getCurrency(), $this->configurationFactory->forRequest($request));
+        $totals = $this->orderService->quote($request, $this->provider(), $liveBasketViewModel, $address, $chosen->getKey());
+        $shippingCents = $totals->getShippingTotal()->getCents();
+        $this->orderClient->updateAmount(
+            $paypalOrderId,
+            $totals->getTotalGross()->getCents() - $shippingCents,
+            $shippingCents,
+            $quotedBasket->getCurrency(),
+            $this->configurationFactory->forRequest($request)
+        );
 
         return ['serviceable' => true, 'shippingOption' => $chosen->getKey(), 'shippingAmount' => $chosen->getCost()->getCents()];
     }
 
     public function confirm(ServerRequestInterface $request, BasketViewModel $liveBasketViewModel, Address $address, string $shippingOptionKey, string $paypalOrderId): Order
     {
-        $productsConfiguration = $this->productsConfigurationFactory->create($request);
-        $quotedBasket = $this->priceQuoteService->resolve($request, $liveBasketViewModel, $productsConfiguration);
-        $shippingCents = $this->shippingCents($productsConfiguration, $quotedBasket, $address, $shippingOptionKey, $this->site($request));
-        $capture = $this->settle($paypalOrderId, $quotedBasket->getTotalGross()->getCents(), $shippingCents, $quotedBasket->getCurrency(), $this->configurationFactory->forRequest($request));
-
         return $this->orderService->place(
             $request,
-            $this->providerRegistry->get(PaypalExpressCheckoutProvider::IDENTIFIER),
+            $this->provider(),
             $liveBasketViewModel,
             $address,
             $shippingOptionKey,
-            PaymentResult::completed(PaymentStatus::PAID, $capture->getCaptureId())
+            new PaypalExpressSettlement(
+                $this->orderClient,
+                $this->amountFormatter,
+                $this->configurationFactory->forRequest($request),
+                $paypalOrderId,
+                $this->binding->customIdFor($liveBasketViewModel)
+            )
         );
     }
 
-    private function quote(ServerRequestInterface $request, BasketViewModel $liveBasketViewModel): BasketViewModel
+    private function provider(): ExpressCheckoutProviderInterface
     {
-        return $this->priceQuoteService->resolve($request, $liveBasketViewModel, $this->productsConfigurationFactory->create($request));
-    }
-
-    private function settle(string $paypalOrderId, int $goodsCents, int $shippingCents, string $currency, PaypalConfiguration $configuration): PaypalExpressCapture
-    {
-        try {
-            $this->orderClient->updateAmount($paypalOrderId, $goodsCents, $shippingCents, $currency, $configuration);
-            $capture = $this->orderClient->capture($paypalOrderId, $configuration);
-        } catch (PaypalApiException $exception) {
-            throw new ExpressPaymentDeclinedException('PayPal express settlement failed: ' . $exception->getMessage(), 1784220836, $exception);
-        }
-        if (!$capture->isCompleted()) {
-            throw new ExpressPaymentDeclinedException(sprintf('PayPal express payment was not captured (status "%s").', $capture->getStatus()), 1784220835);
-        }
-
-        return $capture;
-    }
-
-    private function shippingCents(ProductsConfiguration $configuration, BasketViewModel $basket, Address $address, string $shippingOptionKey, ?Site $site): int
-    {
-        if ($shippingOptionKey === '') {
-            return 0;
-        }
-        $context = $this->shippingContextFactory->createFromBasket($basket, $address, 0, $site);
-        foreach ($this->shippingQuoteService->getAvailableOptions($configuration, $context) as $option) {
-            if ($option->getKey() === $shippingOptionKey) {
-                return $option->getCost()->getCents();
-            }
-        }
-
-        return 0;
+        return $this->providerRegistry->get(PaypalExpressCheckoutProvider::IDENTIFIER);
     }
 
     private function site(ServerRequestInterface $request): ?Site

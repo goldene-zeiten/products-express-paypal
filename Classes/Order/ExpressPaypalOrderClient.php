@@ -32,9 +32,12 @@ final class ExpressPaypalOrderClient
         private readonly PaypalAmountFormatter $amountFormatter
     ) {}
 
-    public function createOrder(int $amountCents, string $currency, PaypalConfiguration $configuration): string
+    /**
+     * @param string $customId echoed back on the capture, so a capture read back later can be proven to belong to the basket
+     */
+    public function createOrder(int $amountCents, string $currency, string $customId, PaypalConfiguration $configuration): string
     {
-        $response = $this->authorizedRequest('POST', $configuration->baseUrl() . self::ORDERS_PATH, $this->createPayload($amountCents, $currency), $configuration);
+        $response = $this->authorizedRequest('POST', $configuration->baseUrl() . self::ORDERS_PATH, $this->createPayload($amountCents, $currency, $customId), $configuration);
         $status = $response->getStatusCode();
         $orderId = (string)($this->decode($response)['id'] ?? '');
         if (($status !== 200 && $status !== 201) || $orderId === '') {
@@ -57,7 +60,37 @@ final class ExpressPaypalOrderClient
     {
         $url = $configuration->baseUrl() . self::ORDERS_PATH . '/' . rawurlencode($orderId) . '/capture';
 
-        return $this->toCapture($this->authorizedRequest('POST', $url, null, $configuration));
+        $response = $this->authorizedRequest('POST', $url, null, $configuration);
+        if ($response->getStatusCode() === 422 && $this->hasIssue($this->decode($response), 'ORDER_ALREADY_CAPTURED')) {
+            // A replayed confirm: the 422 body carries no capture details, so read the order back. The
+            // caller must prove the capture belongs to its basket before it trusts it.
+            return $this->show($orderId, $configuration);
+        }
+
+        return $this->toCapture($response, false);
+    }
+
+    /**
+     * Gives a captured payment back in full, for an express order that could not be placed.
+     */
+    public function refundCapture(string $captureId, PaypalConfiguration $configuration): void
+    {
+        $url = $configuration->baseUrl() . '/v2/payments/captures/' . rawurlencode($captureId) . '/refund';
+        $response = $this->authorizedRequest('POST', $url, null, $configuration);
+        if ($response->getStatusCode() !== 200 && $response->getStatusCode() !== 201) {
+            throw new PaypalApiException(sprintf('PayPal express refund returned HTTP %d.', $response->getStatusCode()), 1791724353);
+        }
+    }
+
+    private function show(string $orderId, PaypalConfiguration $configuration): PaypalExpressCapture
+    {
+        $url = $configuration->baseUrl() . self::ORDERS_PATH . '/' . rawurlencode($orderId);
+        $response = $this->authorizedRequest('GET', $url, null, $configuration);
+        if ($response->getStatusCode() !== 200) {
+            throw new PaypalApiException(sprintf('PayPal express order lookup returned HTTP %d.', $response->getStatusCode()), 1791724349);
+        }
+
+        return $this->toCapture($response, true);
     }
 
     /**
@@ -87,6 +120,7 @@ final class ExpressPaypalOrderClient
         try {
             return match ($method) {
                 'PATCH' => $this->httpClient->patchJson($url, (array)$payload, $headers),
+                'GET' => $this->httpClient->get($url, $headers),
                 default => $payload === null ? $this->httpClient->post($url, $headers) : $this->httpClient->postJson($url, $payload, $headers),
             };
         } catch (ApiTransportException $exception) {
@@ -97,13 +131,14 @@ final class ExpressPaypalOrderClient
     /**
      * @return array<string, mixed>
      */
-    private function createPayload(int $amountCents, string $currency): array
+    private function createPayload(int $amountCents, string $currency, string $customId): array
     {
         return [
             'intent' => 'CAPTURE',
             'purchase_units' => [
                 [
                     'reference_id' => 'default',
+                    'custom_id' => $customId,
                     'amount' => $this->amountBreakdown($amountCents, 0, $currency),
                 ],
             ],
@@ -157,21 +192,24 @@ final class ExpressPaypalOrderClient
         ];
     }
 
-    private function toCapture(ResponseInterface $response): PaypalExpressCapture
+    private function toCapture(ResponseInterface $response, bool $replayed): PaypalExpressCapture
     {
         $status = $response->getStatusCode();
-        $data = $this->decode($response);
-        if ($status === 422 && $this->hasIssue($data, 'ORDER_ALREADY_CAPTURED')) {
-            // A replayed confirm: the order was captured on the first pass. Treat it as the success it is.
-            return new PaypalExpressCapture('COMPLETED', '');
-        }
-        if ($status !== 200 && $status !== 201) {
+        if (!$replayed && $status !== 200 && $status !== 201) {
             throw new PaypalApiException(sprintf('PayPal express capture returned HTTP %d.', $status), 1784220834);
         }
+        $data = $this->decode($response);
+        $purchaseUnit = (array)($data['purchase_units'][0] ?? []);
+        $capture = (array)($purchaseUnit['payments']['captures'][0] ?? []);
+        $amount = (array)($capture['amount'] ?? []);
 
         return new PaypalExpressCapture(
-            (string)($data['status'] ?? ''),
-            (string)($data['purchase_units'][0]['payments']['captures'][0]['id'] ?? '')
+            (string)($capture['status'] ?? $data['status'] ?? ''),
+            (string)($capture['id'] ?? ''),
+            isset($amount['value']) ? Money::fromDecimalString((string)$amount['value']) : null,
+            (string)($amount['currency_code'] ?? ''),
+            (string)($capture['custom_id'] ?? $purchaseUnit['custom_id'] ?? ''),
+            $replayed
         );
     }
 

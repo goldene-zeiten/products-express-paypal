@@ -4,24 +4,36 @@ declare(strict_types=1);
 
 namespace GoldeneZeiten\Products\Express\Paypal\Order;
 
+use GoldeneZeiten\Products\Core\Domain\ValueObject\Money;
 use Symfony\Component\DependencyInjection\Attribute\Exclude;
 
 /**
- * The outcome of capturing an express PayPal order: the PayPal capture status and the capture id that
- * becomes the order's external payment reference. A status other than COMPLETED means the money did not
- * move, so no order must be created.
+ * The outcome of capturing an express PayPal order: the PayPal capture status, the capture id that becomes
+ * the order's external payment reference, the amount PayPal reports it moved and the `custom_id` echoed from
+ * the created order. A status other than COMPLETED means the money did not move, so no order must be
+ * created. A capture that was read back because the order had already been captured is marked as replayed:
+ * it was not made by this request, so the caller has to prove it belongs to this basket.
  */
 #[Exclude]
 final readonly class PaypalExpressCapture
 {
     public function __construct(
         private string $status,
-        private string $captureId
+        private string $captureId,
+        private ?Money $amount = null,
+        private string $currency = '',
+        private string $customId = '',
+        private bool $replayed = false
     ) {}
 
     public function isCompleted(): bool
     {
         return $this->status === 'COMPLETED';
+    }
+
+    public function isReplayed(): bool
+    {
+        return $this->replayed;
     }
 
     public function getStatus(): string
@@ -32,5 +44,20 @@ final readonly class PaypalExpressCapture
     public function getCaptureId(): string
     {
         return $this->captureId;
+    }
+
+    public function getAmount(): ?Money
+    {
+        return $this->amount;
+    }
+
+    public function getCurrency(): string
+    {
+        return $this->currency;
+    }
+
+    public function getCustomId(): string
+    {
+        return $this->customId;
     }
 }
