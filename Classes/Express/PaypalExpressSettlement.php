@@ -20,7 +20,8 @@ use Symfony\Component\DependencyInjection\Attribute\Exclude;
 /**
  * One approved PayPal order, handed to the core express order service by {@see PaypalExpressCheckoutService}:
  * it sets the PayPal order's amount to the order total core computed, captures it, and refunds the capture
- * when the order that amount was meant to pay cannot be placed.
+ * when the order that amount was meant to pay cannot be placed. A capture PayPal holds for review is
+ * accepted as pending; PayPal's capture webhook settles it later.
  *
  * A capture that was only read back because the PayPal order had already been captured is accepted only if
  * it carries this basket's custom id, so a payment made for another basket cannot be claimed.
@@ -39,14 +40,18 @@ final readonly class PaypalExpressSettlement implements ExpressSettlementInterfa
     public function settle(Order $order): PaymentResult
     {
         $capture = $this->capture($order);
-        if (!$capture->isCompleted()) {
+        if (!$capture->isCompleted() && !$capture->isPending()) {
             throw new ExpressPaymentDeclinedException(sprintf('PayPal express payment was not captured (status "%s").', $capture->getStatus()), 1784220835);
         }
         if ($capture->isReplayed() && $capture->getCustomId() !== $this->expectedCustomId) {
             throw new ExpressPaymentDeclinedException('The PayPal order was captured for another basket.', 1791724377);
         }
 
-        return PaymentResult::completed(PaymentStatus::PAID, $capture->getCaptureId(), [], $this->settledAmount($capture, $order));
+        $settledAmount = $this->settledAmount($capture, $order);
+
+        return $capture->isPending()
+            ? PaymentResult::pending($capture->getCaptureId(), settledAmount: $settledAmount)
+            : PaymentResult::completed(PaymentStatus::PAID, $capture->getCaptureId(), [], $settledAmount);
     }
 
     public function refund(PaymentResult $settled): void

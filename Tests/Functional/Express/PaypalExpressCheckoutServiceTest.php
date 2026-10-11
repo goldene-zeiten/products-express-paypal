@@ -7,12 +7,16 @@ namespace GoldeneZeiten\Products\Express\Paypal\Tests\Functional\Express;
 use GoldeneZeiten\Products\Core\Domain\Dto\Address;
 use GoldeneZeiten\Products\Core\Domain\Dto\BasketViewItem;
 use GoldeneZeiten\Products\Core\Domain\Dto\BasketViewModel;
+use GoldeneZeiten\Products\Core\Domain\Enum\OrderStatus;
 use GoldeneZeiten\Products\Core\Domain\Enum\PaymentStatus;
 use GoldeneZeiten\Products\Core\Domain\Model\Product;
+use GoldeneZeiten\Products\Core\Domain\Repository\OrderRepository;
+use GoldeneZeiten\Products\Core\Domain\Repository\PaymentTransactionRepository;
 use GoldeneZeiten\Products\Core\Domain\Repository\ProductRepository;
 use GoldeneZeiten\Products\Core\Domain\ValueObject\Money;
 use GoldeneZeiten\Products\Core\Express\Exception\ExpressAmountMismatchException;
 use GoldeneZeiten\Products\Core\Express\Exception\ExpressOrderFailedException;
+use GoldeneZeiten\Products\Core\Payment\PaymentCallbackService;
 use GoldeneZeiten\Products\Core\Shipping\Exception\MissingShippingOptionException;
 use GoldeneZeiten\Products\Express\Paypal\Express\Exception\ExpressPaymentDeclinedException;
 use GoldeneZeiten\Products\Express\Paypal\Express\PaypalExpressBinding;
@@ -22,6 +26,7 @@ use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Http\Stream;
 use TYPO3\CMS\Core\Site\Entity\Site;
 
 /**
@@ -215,6 +220,77 @@ final class PaypalExpressCheckoutServiceTest extends AbstractPaypalExpressMockTe
         );
 
         $this->assertSame(PaymentStatus::PAID, $order->getPaymentStatus());
+    }
+
+    #[Test]
+    public function aCaptureThatPayPalHoldsAcceptsTheOrderAsPendingAndBindsTheCapture(): void
+    {
+        $order = $this->get(PaypalExpressCheckoutService::class)->confirm(
+            $this->request(),
+            $this->basketViewModel($this->product()),
+            $this->address(),
+            '',
+            'PAYPAL-EXPRESS-ORDER-PENDING'
+        );
+
+        $this->assertSame(PaymentStatus::PENDING, $order->getPaymentStatus());
+        $this->assertSame(OrderStatus::CONFIRMED, $order->getStatus());
+        $this->assertSame([], $this->loggedRequests('/express/paypal/v2/payments/captures/EXPRESS-CAPTURE-PENDING/refund'));
+        $transaction = $this->get(PaymentTransactionRepository::class)->findOneByExternalId('paypal-express', 'EXPRESS-CAPTURE-PENDING');
+        $this->assertSame($order->getUid(), $transaction?->getOrderUid());
+    }
+
+    #[Test]
+    public function thePayPalWebhookSettlesAHeldExpressOrderOnceTheCaptureCompletes(): void
+    {
+        $order = $this->get(PaypalExpressCheckoutService::class)->confirm(
+            $this->request(),
+            $this->basketViewModel($this->product()),
+            $this->address(),
+            '',
+            'PAYPAL-EXPRESS-ORDER-PENDING'
+        );
+
+        $this->get(PaymentCallbackService::class)->handleStaticWebhook('paypal', $this->captureEvent('PAYMENT.CAPTURE.COMPLETED', '100.00'));
+
+        $this->assertSame(PaymentStatus::PAID, $this->get(OrderRepository::class)->findByUid((int)$order->getUid())?->getPaymentStatus());
+    }
+
+    #[Test]
+    public function thePayPalWebhookCancelsAHeldExpressOrderWhenTheCaptureIsDenied(): void
+    {
+        $order = $this->get(PaypalExpressCheckoutService::class)->confirm(
+            $this->request(),
+            $this->basketViewModel($this->product()),
+            $this->address(),
+            '',
+            'PAYPAL-EXPRESS-ORDER-PENDING'
+        );
+
+        $this->get(PaymentCallbackService::class)->handleStaticWebhook('paypal', $this->captureEvent('PAYMENT.CAPTURE.DENIED', '100.00'));
+
+        $reloaded = $this->get(OrderRepository::class)->findByUid((int)$order->getUid());
+        $this->assertSame(PaymentStatus::FAILED, $reloaded?->getPaymentStatus());
+        $this->assertSame(OrderStatus::CANCELLED, $reloaded->getStatus());
+    }
+
+    private function captureEvent(string $type, string $amount): ServerRequestInterface
+    {
+        $payload = json_encode([
+            'event_type' => $type,
+            'resource' => ['id' => 'EXPRESS-CAPTURE-PENDING', 'custom_id' => 'a-basket-hash', 'amount' => ['value' => $amount, 'currency_code' => 'EUR']],
+        ], JSON_THROW_ON_ERROR);
+        $stream = new Stream('php://temp', 'rw');
+        $stream->write($payload);
+        $stream->rewind();
+
+        return new ServerRequest('http://localhost/webhook', 'POST', $stream, [
+            'PayPal-Transmission-Id' => 'txn-1',
+            'PayPal-Transmission-Time' => '2026-07-15T12:00:00Z',
+            'PayPal-Transmission-Sig' => 'signature',
+            'PayPal-Cert-Url' => 'https://api.paypal.com/cert.pem',
+            'PayPal-Auth-Algo' => 'SHA256withRSA',
+        ]);
     }
 
     private function request(bool $shipping = false): ServerRequestInterface

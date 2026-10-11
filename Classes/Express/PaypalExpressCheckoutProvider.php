@@ -8,6 +8,7 @@ use GoldeneZeiten\Products\Core\Domain\Dto\Express\ExpressCheckoutContext;
 use GoldeneZeiten\Products\Core\Express\ExpressCheckoutProviderInterface;
 use GoldeneZeiten\Products\Core\Middleware\ExpressShippingQuoteMiddleware;
 use GoldeneZeiten\Products\Payment\Paypal\Configuration\PaypalConfigurationFactory;
+use GoldeneZeiten\Products\Payment\Paypal\Payment\PaypalPaymentMethod;
 use TYPO3\CMS\Extbase\Utility\LocalizationUtility;
 
 /**
@@ -20,7 +21,7 @@ use TYPO3\CMS\Extbase\Utility\LocalizationUtility;
  */
 final class PaypalExpressCheckoutProvider implements ExpressCheckoutProviderInterface
 {
-    public const IDENTIFIER = 'paypal-express';
+    public const IDENTIFIER = PaypalPaymentMethod::EXPRESS_PROVIDER_IDENTIFIER;
 
     /**
      * The currencies PayPal settles in. Offering the button for anything else only fails once the sheet
