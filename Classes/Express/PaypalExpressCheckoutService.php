@@ -19,10 +19,12 @@ use GoldeneZeiten\Products\Core\Shipping\ShippingQuoteService;
 use GoldeneZeiten\Products\Express\Paypal\Express\Exception\ExpressPaymentDeclinedException;
 use GoldeneZeiten\Products\Express\Paypal\Order\ExpressPaypalOrderClient;
 use GoldeneZeiten\Products\Express\Paypal\Order\PaypalExpressCapture;
+use GoldeneZeiten\Products\Payment\Paypal\Configuration\PaypalConfiguration;
 use GoldeneZeiten\Products\Payment\Paypal\Configuration\PaypalConfigurationFactory;
 use GoldeneZeiten\Products\Payment\Paypal\Exception\PaypalApiException;
 use Psr\Http\Message\ServerRequestInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
+use TYPO3\CMS\Core\Site\Entity\Site;
 
 /**
  * Orchestrates the three server steps of a PayPal express checkout, all against the shop's own basket and
@@ -56,7 +58,7 @@ final readonly class PaypalExpressCheckoutService
         return $this->orderClient->createOrder(
             $quotedBasket->getTotalGross()->getCents(),
             $quotedBasket->getCurrency(),
-            $this->configurationFactory->forCurrentRequest()
+            $this->configurationFactory->forRequest($request)
         );
     }
 
@@ -70,14 +72,14 @@ final readonly class PaypalExpressCheckoutService
     {
         $productsConfiguration = $this->productsConfigurationFactory->create($request);
         $quotedBasket = $this->priceQuoteService->resolve($request, $liveBasketViewModel, $productsConfiguration);
-        $context = $this->shippingContextFactory->createFromBasket($quotedBasket, $address);
+        $context = $this->shippingContextFactory->createFromBasket($quotedBasket, $address, 0, $this->site($request));
         $options = $this->shippingQuoteService->getAvailableOptions($productsConfiguration, $context);
         if ($options === []) {
             return ['serviceable' => false, 'shippingOption' => '', 'shippingAmount' => 0];
         }
 
         $chosen = $options[0];
-        $this->orderClient->updateAmount($paypalOrderId, $quotedBasket->getTotalGross()->getCents(), $chosen->getCost()->getCents(), $quotedBasket->getCurrency(), $this->configurationFactory->forCurrentRequest());
+        $this->orderClient->updateAmount($paypalOrderId, $quotedBasket->getTotalGross()->getCents(), $chosen->getCost()->getCents(), $quotedBasket->getCurrency(), $this->configurationFactory->forRequest($request));
 
         return ['serviceable' => true, 'shippingOption' => $chosen->getKey(), 'shippingAmount' => $chosen->getCost()->getCents()];
     }
@@ -86,8 +88,8 @@ final readonly class PaypalExpressCheckoutService
     {
         $productsConfiguration = $this->productsConfigurationFactory->create($request);
         $quotedBasket = $this->priceQuoteService->resolve($request, $liveBasketViewModel, $productsConfiguration);
-        $shippingCents = $this->shippingCents($productsConfiguration, $quotedBasket, $address, $shippingOptionKey);
-        $capture = $this->settle($paypalOrderId, $quotedBasket->getTotalGross()->getCents(), $shippingCents, $quotedBasket->getCurrency());
+        $shippingCents = $this->shippingCents($productsConfiguration, $quotedBasket, $address, $shippingOptionKey, $this->site($request));
+        $capture = $this->settle($paypalOrderId, $quotedBasket->getTotalGross()->getCents(), $shippingCents, $quotedBasket->getCurrency(), $this->configurationFactory->forRequest($request));
 
         return $this->orderService->place(
             $request,
@@ -104,9 +106,8 @@ final readonly class PaypalExpressCheckoutService
         return $this->priceQuoteService->resolve($request, $liveBasketViewModel, $this->productsConfigurationFactory->create($request));
     }
 
-    private function settle(string $paypalOrderId, int $goodsCents, int $shippingCents, string $currency): PaypalExpressCapture
+    private function settle(string $paypalOrderId, int $goodsCents, int $shippingCents, string $currency, PaypalConfiguration $configuration): PaypalExpressCapture
     {
-        $configuration = $this->configurationFactory->forCurrentRequest();
         try {
             $this->orderClient->updateAmount($paypalOrderId, $goodsCents, $shippingCents, $currency, $configuration);
             $capture = $this->orderClient->capture($paypalOrderId, $configuration);
@@ -120,12 +121,12 @@ final readonly class PaypalExpressCheckoutService
         return $capture;
     }
 
-    private function shippingCents(ProductsConfiguration $configuration, BasketViewModel $basket, Address $address, string $shippingOptionKey): int
+    private function shippingCents(ProductsConfiguration $configuration, BasketViewModel $basket, Address $address, string $shippingOptionKey, ?Site $site): int
     {
         if ($shippingOptionKey === '') {
             return 0;
         }
-        $context = $this->shippingContextFactory->createFromBasket($basket, $address);
+        $context = $this->shippingContextFactory->createFromBasket($basket, $address, 0, $site);
         foreach ($this->shippingQuoteService->getAvailableOptions($configuration, $context) as $option) {
             if ($option->getKey() === $shippingOptionKey) {
                 return $option->getCost()->getCents();
@@ -133,5 +134,12 @@ final readonly class PaypalExpressCheckoutService
         }
 
         return 0;
+    }
+
+    private function site(ServerRequestInterface $request): ?Site
+    {
+        $site = $request->getAttribute('site');
+
+        return $site instanceof Site ? $site : null;
     }
 }

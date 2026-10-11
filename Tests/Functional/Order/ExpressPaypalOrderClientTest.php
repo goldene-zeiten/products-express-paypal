@@ -37,6 +37,31 @@ final class ExpressPaypalOrderClientTest extends AbstractPaypalExpressMockTestCa
     }
 
     #[Test]
+    public function createsAYenOrderWithoutDecimals(): void
+    {
+        $this->orderClient()->createOrder(100000, 'JPY', $this->configuration());
+
+        $body = json_decode((string)$this->loggedRequests('/express/paypal/v2/checkout/orders')[0]['body'], true);
+        $this->assertSame('1000', $body['purchase_units'][0]['amount']['value']);
+        $this->assertSame('1000', $body['purchase_units'][0]['amount']['breakdown']['item_total']['value']);
+    }
+
+    /**
+     * PayPal validates that the breakdown adds up to the total, so the parts are rounded first and summed.
+     */
+    #[Test]
+    public function patchesAWholeUnitBreakdownThatAddsUpToItsTotal(): void
+    {
+        $this->orderClient()->updateAmount('PAYPAL-EXPRESS-ORDER-1', 123440, 50040, 'HUF', $this->configuration());
+
+        $patch = json_decode((string)$this->loggedRequests('/express/paypal/v2/checkout/orders/PAYPAL-EXPRESS-ORDER-1', 'PATCH')[0]['body'], true);
+        $amount = $patch[0]['value'];
+        $this->assertSame('1234', $amount['breakdown']['item_total']['value']);
+        $this->assertSame('500', $amount['breakdown']['shipping']['value']);
+        $this->assertSame('1734', $amount['value']);
+    }
+
+    #[Test]
     public function throwsOnADeclinedCapture(): void
     {
         $this->expectException(PaypalApiException::class);

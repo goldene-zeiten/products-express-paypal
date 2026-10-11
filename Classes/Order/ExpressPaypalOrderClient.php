@@ -8,6 +8,7 @@ use GoldeneZeiten\Products\ApiClient\Authentication\OAuth2ClientCredentialsProvi
 use GoldeneZeiten\Products\ApiClient\Exception\ApiTransportException;
 use GoldeneZeiten\Products\ApiClient\Http\ApiHttpClient;
 use GoldeneZeiten\Products\Core\Domain\ValueObject\Money;
+use GoldeneZeiten\Products\Payment\Paypal\Amount\PaypalAmountFormatter;
 use GoldeneZeiten\Products\Payment\Paypal\Authentication\PaypalCredentialsFactory;
 use GoldeneZeiten\Products\Payment\Paypal\Configuration\PaypalConfiguration;
 use GoldeneZeiten\Products\Payment\Paypal\Exception\PaypalApiException;
@@ -27,7 +28,8 @@ final class ExpressPaypalOrderClient
     public function __construct(
         private readonly ApiHttpClient $httpClient,
         private readonly OAuth2ClientCredentialsProvider $tokenProvider,
-        private readonly PaypalCredentialsFactory $credentialsFactory
+        private readonly PaypalCredentialsFactory $credentialsFactory,
+        private readonly PaypalAmountFormatter $amountFormatter
     ) {}
 
     public function createOrder(int $amountCents, string $currency, PaypalConfiguration $configuration): string
@@ -135,17 +137,21 @@ final class ExpressPaypalOrderClient
      */
     private function amountBreakdown(int $itemTotalCents, int $shippingCents, string $currency): array
     {
+        // The parts are rounded before they are summed, so the breakdown always adds up to the total.
+        $itemTotal = $this->amountFormatter->toUnits(Money::fromCents($itemTotalCents), $currency);
+        $shipping = $this->amountFormatter->toUnits(Money::fromCents($shippingCents), $currency);
+
         return [
             'currency_code' => $currency,
-            'value' => Money::fromCents($itemTotalCents + $shippingCents)->getDecimalString(),
+            'value' => $this->amountFormatter->formatUnits($itemTotal + $shipping, $currency),
             'breakdown' => [
                 'item_total' => [
                     'currency_code' => $currency,
-                    'value' => Money::fromCents($itemTotalCents)->getDecimalString(),
+                    'value' => $this->amountFormatter->formatUnits($itemTotal, $currency),
                 ],
                 'shipping' => [
                     'currency_code' => $currency,
-                    'value' => Money::fromCents($shippingCents)->getDecimalString(),
+                    'value' => $this->amountFormatter->formatUnits($shipping, $currency),
                 ],
             ],
         ];

@@ -18,6 +18,7 @@ use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Site\Entity\Site;
 
 /**
  * The confirm orchestration end to end: recompute the amount from the shop's basket, patch it onto the
@@ -70,6 +71,43 @@ final class PaypalExpressCheckoutServiceTest extends AbstractPaypalExpressMockTe
             '',
             'PAYPAL-EXPRESS-ORDER-DECLINE'
         );
+    }
+
+    /**
+     * Express callbacks may run before core publishes the current request, so credentials configured only
+     * on the site must be read from the site of the request the service is handed.
+     */
+    #[Test]
+    public function siteOnlyCredentialsSettleTheExpressPayment(): void
+    {
+        unset($GLOBALS['TYPO3_REQUEST']);
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS']['products_payment_paypal'] = [];
+        $request = $this->request()->withAttribute('site', new Site('products', 1, [
+            'base' => 'http://localhost/',
+            'rootPageId' => 1,
+            'settings' => [
+                'products' => [
+                    'payment' => [
+                        'paypal' => [
+                            'environment' => 'sandbox',
+                            'clientId' => 'mock-client',
+                            'clientSecret' => 'secret',
+                            'apiBaseUrl' => $this->mockRoot . '/express/paypal',
+                        ],
+                    ],
+                ],
+            ],
+        ]));
+
+        $order = $this->get(PaypalExpressCheckoutService::class)->confirm(
+            $request,
+            $this->basketViewModel($this->product()),
+            new Address(email: 'wallet@example.com', firstName: 'Wallet', lastName: 'Buyer', street: 'Wallet St 1', zip: '10115', city: 'Berlin', country: 'DE'),
+            '',
+            'PAYPAL-EXPRESS-ORDER-1'
+        );
+
+        $this->assertSame(PaymentStatus::PAID, $order->getPaymentStatus());
     }
 
     private function request(): ServerRequestInterface
