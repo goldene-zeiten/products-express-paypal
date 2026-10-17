@@ -5,7 +5,7 @@
     <extension class="\T3Docs\Typo3DocsTheme\DependencyInjection\Typo3DocsThemeExtension"
                project-home="https://extensions.typo3.org/extension/products_express_paypal/"
                typo3-core-preferred="13"
-               interlink-shortcode="products_express_paypal"
+               interlink-shortcode="goldene-zeiten/products-express-paypal"
     />
     <project title="Products PayPal Express Checkout"
              release="1.0"
